@@ -79,8 +79,8 @@ mod tests {
         thread::sleep(Duration::from_secs(1));
 
         let mut stream = std::net::TcpStream::connect(ADDRESS).unwrap();
-        stream.write(b"PING").unwrap();
-        let mut buffer = [0; 516];
+        writeln!(stream, "PING\n").unwrap();
+        let mut buffer: [u8; 7] = [0; 7];
         stream.read(&mut buffer).unwrap();
         assert_eq!(buffer.as_slice(), b"+PONG\r\n");
     }
