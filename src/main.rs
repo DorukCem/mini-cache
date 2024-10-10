@@ -1,7 +1,7 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-
 use const_format::concatcp;
+mod parser;
 
 const PORT: &'static str = "7879";
 const ADDRESS: &'static str = concatcp!("127.0.0.1:", PORT);
@@ -19,9 +19,9 @@ async fn start_tcp_server() {
 }
 
 async fn handle_connection(mut socket: TcpStream) {
-    let mut buf = vec![0; 1024];
-
+    
     loop {
+        let mut buf = vec![0; 1024];
         let n = socket
             .read(&mut buf)
             .await
@@ -30,6 +30,8 @@ async fn handle_connection(mut socket: TcpStream) {
         if n == 0 {
             return;
         }
+
+        parser::parse_bytes(&buf);
 
         socket
             .write_all(b"+PONG\r\n")
