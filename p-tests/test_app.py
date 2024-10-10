@@ -1,5 +1,6 @@
 import socket
 import subprocess
+import threading
 import time
 import pytest
 
@@ -74,15 +75,46 @@ def test_ping(start_redis_clone, tcp_connection):
 
 def test_double_ping(start_redis_clone, tcp_connection):
     """Test to send two PING commands and verify two +PONG responses."""
-    # Send two PING commands in a row
     message = "PING"
 
     for _ in range(2):
         tcp_connection.sendall(message.encode("utf-8"))  # Send both PING commands
-        # Receive response for both PINGs
         data = tcp_connection.recv(1024)  # Buffer size is 1024 bytes
-        # Assert that the response contains two +PONG\r\n
         expected_response = "+PONG\r\n"
         assert (
             data.decode("utf-8") == expected_response
         ), f"Expected '{expected_response}', but got {data.decode('utf-8')}"
+
+
+def ping_server():
+    """Function to send a PING command and return the response."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, PORT))
+        s.sendall(b"PING\r\n")  # Correctly formatted PING command
+        data = s.recv(1024)  # Receive response
+        return data.decode("utf-8")
+
+
+def test_concurrent_ping(start_redis_clone):
+    """Test to send two PING commands concurrently and verify two +PONG responses."""
+    responses = []
+
+    # Create two threads to send PING commands concurrently
+    def worker():
+        response = ping_server()
+        responses.append(response)
+
+    threads = [threading.Thread(target=worker) for _ in range(42)]
+
+    for thread in threads:
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+
+    # Assert that both responses are +PONG\r\n
+    expected_response = "+PONG\r\n"
+    for response in responses:
+        assert (
+            response == expected_response
+        ), f"Expected '{expected_response}', but got '{response}'"
