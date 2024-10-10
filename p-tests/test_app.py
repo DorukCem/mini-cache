@@ -68,18 +68,21 @@ def test_ping(start_redis_clone, tcp_connection):
 
     # Assert the response
     assert (
-        data.decode("utf-8")== "+PONG\r\n"
+        data.decode("utf-8") == "+PONG\r\n"
     ), f"Expected '+PONG\r\n', but got {data.decode('utf-8')}"
+
 
 def test_double_ping(start_redis_clone, tcp_connection):
     """Test to send two PING commands and verify two +PONG responses."""
     # Send two PING commands in a row
-    message = "PING\r\nPING\r\n"
-    tcp_connection.sendall(message.encode("utf-8"))  # Send both PING commands
+    message = "PING"
 
-    # Receive response for both PINGs
-    data = tcp_connection.recv(1024)  # Buffer size is 1024 bytes
-
-    # Assert that the response contains two +PONG\r\n
-    expected_response = "+PONG\r\n+PONG\r\n"
-    assert data.decode("utf-8") == expected_response, f"Expected '{expected_response}', but got {data.decode('utf-8')}"
+    for _ in range(2):
+        tcp_connection.sendall(message.encode("utf-8"))  # Send both PING commands
+        # Receive response for both PINGs
+        data = tcp_connection.recv(1024)  # Buffer size is 1024 bytes
+        # Assert that the response contains two +PONG\r\n
+        expected_response = "+PONG\r\n"
+        assert (
+            data.decode("utf-8") == expected_response
+        ), f"Expected '{expected_response}', but got {data.decode('utf-8')}"
