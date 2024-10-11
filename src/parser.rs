@@ -58,7 +58,7 @@ pub fn parse_bytes(buffer: &Vec<u8>) -> Result<(), Utf8Error> {
     let parse_string = str::from_utf8(buffer)?;
     println!("{parse_string}");
 
-    let tokens = parse(parse_string);
+    let tokens = parse_resp(parse_string);
     let response: String = execute_tokens(tokens);
 
     return Ok(());
@@ -68,7 +68,7 @@ fn execute_tokens(tokens: Result<Vec<RespToken>>) -> String {
     todo!()
 }
 
-fn parse(s: &str) -> Result<Vec<RespToken>> {
+fn parse_resp(s: &str) -> Result<Vec<RespToken>> {
     let (head, tail) = s.split_at(1);
 
     let data_type = match head {
@@ -123,18 +123,22 @@ fn parse_simple_error(s: &str) -> Result<RespToken> {
 }
 
 fn parse_simple_integer(s: &str) -> Result<RespToken> {
-    todo!();
+    if let Some(s) = s.strip_suffix("\r\n"){
+       let integer = s.parse::<i64>()?;
+       return Ok(RespToken::Integer(integer));
+    }
+    return Err(anyhow!(ParseError::InvalidToken))
 }
 
 fn parse_bulk_string(s: &str) -> Result<RespToken> {
-    if let None = s.strip_suffix("\r\n"){
-        return Err(anyhow!(ParseError::InvalidToken))
+    if let Some(s) = s.strip_suffix("\r\n"){
+        let split_idx = s.find("\r\n").ok_or(anyhow!(ParseError::InvalidToken))?;
+        let length = &s[0..split_idx].parse::<usize>()?;
+        let carriage_length = 2;
+        let inner_string = &s[split_idx+carriage_length..split_idx+carriage_length+length];
+        return Ok(RespToken::BulkString(inner_string.to_owned()));
     }
-    let split_idx = s.find("\r\n").ok_or(anyhow!(ParseError::InvalidToken))?;
-    let length = &s[0..split_idx].parse::<usize>()?;
-    let carriage_length = 2;
-    let inner_string = &s[split_idx+carriage_length..split_idx+carriage_length+length];
-    return Ok(RespToken::BulkString(inner_string.to_owned()));
+    return Err(anyhow!(ParseError::InvalidToken))
 }
 
 fn parse_array(s: &str) -> Result<RespToken> {
@@ -185,16 +189,30 @@ fn parse_push(s: &str) -> Result<RespToken> {
 mod tests {
     use std::iter::zip;
 
-    use super::{parse_bulk_string, RespToken};
+    use super::{parse_bulk_string, parse_simple_integer, RespToken};
 
     #[test]
     fn test_parse_bulk_string() {
-        let cases = vec!["5\r\nhello\r\n", "17\r\nLine1\nLine2\nLine3\r\n"];
-        let expected = vec!["hello", "Line1\nLine2\nLine3"];
+        let cases = vec!["5\r\nhello\r\n", "17\r\nLine1\nLine2\nLine3\r\n", "0\r\n\r\n"];
+        let expected = vec!["hello", "Line1\nLine2\nLine3", ""];
 
         for (case, expect) in zip(cases, expected) {
             let res = parse_bulk_string(case).unwrap();
             if let RespToken::BulkString(inner) = res {
+                assert_eq!(inner, expect);
+            } else {
+                panic!("Polymorphisim error")
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_integer(){
+        let cases = vec!["0\r\n", "1000\r\n", "-1000\r\n", "+1000\r\n"];
+        let expected = vec![0, 1000, -1000, 1000];
+        for (case, expect) in zip(cases, expected) {
+            let res = parse_simple_integer(case).unwrap();
+            if let RespToken::Integer(inner) = res {
                 assert_eq!(inner, expect);
             } else {
                 panic!("Polymorphisim error")
