@@ -1,9 +1,8 @@
 [package]
-name = "redis_clone"
+name = "mini-cache"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.89"
 const_format = "0.2.33"
 tokio = { version = "1.40.0", features = ["full"] }

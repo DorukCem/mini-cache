@@ -1,9 +1,9 @@
+use const_format::concatcp;
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use const_format::concatcp;
-mod parser;
 
-const PORT: &'static str = "7879";
+const PORT: &'static str = "8012";
 const ADDRESS: &'static str = concatcp!("127.0.0.1:", PORT);
 
 async fn start_tcp_server() {
@@ -11,7 +11,7 @@ async fn start_tcp_server() {
 
     loop {
         // The second item contains the IP and port of the new connection.
-        let (socket, _) = listener.accept().await.unwrap();
+        let (socket, _addr) = listener.accept().await.expect("couldn't get client");
         tokio::spawn(async move {
             handle_connection(socket).await;
         });
@@ -19,9 +19,9 @@ async fn start_tcp_server() {
 }
 
 async fn handle_connection(mut socket: TcpStream) {
-    
     loop {
         let mut buf = vec![0; 1024];
+
         let n = socket
             .read(&mut buf)
             .await
@@ -31,7 +31,7 @@ async fn handle_connection(mut socket: TcpStream) {
             return;
         }
 
-        parser::parse_bytes(&buf);
+        println!("{:?}", buf);
 
         socket
             .write_all(b"+PONG\r\n")
@@ -46,5 +46,4 @@ async fn main() {
 }
 
 #[cfg(test)]
-mod tests {
-}
+mod tests {}
