@@ -41,8 +41,24 @@ async fn handle_connection(socket: TcpStream, db: Arc<Database>) {
     let mut decoder = decoder::Decoder::new(socket);
     loop {
         let command = decoder.decode().await;
-        println!("Command recieved was {:?}", command);
-        let response = execute_command(command, &db);
+        let response = match command {
+            Ok(command) => {
+                println!("Command recieved was {:?}", command);
+                execute_command(command, &db)
+            }
+            Err(error) => match error {
+                decoder::DecodeError::ConnectionClosed => {
+                    println!("connection closed!");
+                    return;
+                }
+                decoder::DecodeError::ParseError(parse_error) => match parse_error {
+                    decoder::ParseError::InvalidFormat(client_error) => {
+                        format!("CLIENT_ERROR {}\r\n", client_error)
+                    }
+                    decoder::ParseError::UnknownCommand(_) => "ERROR\r\n".to_owned(),
+                },
+            },
+        };
         println!("Created response: {}", response);
         decoder.send(response).await;
     }
@@ -64,7 +80,7 @@ fn handle_get(command: GetCommand, db: &Database) -> String {
             "VALUE {} {} {}\r\n{}\r\nEND\r\n",
             command.key, entry.flags, entry.byte_count, entry.value
         ),
-        None => "END".to_string(),
+        None => "END\r\n".to_string(),
     }
 }
 

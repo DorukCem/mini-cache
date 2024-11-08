@@ -25,20 +25,29 @@ pub struct GetCommand {
 }
 
 #[derive(Debug)]
-struct ParseError;
+pub enum ParseError {
+    InvalidFormat(String),
+    UnknownCommand(String),
+}
+#[derive(Debug)]
+pub struct ConnectionClosedError {}
 
+pub enum DecodeError{
+    ConnectionClosed,
+    ParseError(ParseError)
+}
 struct ConnectionBuffer {
     connection: TcpStream,
     buffer: String,
 }
 
 impl ConnectionBuffer {
-    async fn read_header(&mut self) -> String {
+    async fn read_header(&mut self) -> Result<String, ConnectionClosedError> {
         let data = self.read_until_delimeter().await;
         data
     }
 
-    async fn read_until_delimeter(&mut self) -> String {
+    async fn read_until_delimeter(&mut self) -> Result<String, ConnectionClosedError> {
         while !self.buffer.contains("\r\n") {
             let mut data = vec![0; 1024];
 
@@ -50,7 +59,7 @@ impl ConnectionBuffer {
 
             // Socket closed
             if n == 0 {
-                return "".to_string(); // TODO turn this in a result
+                return Err(ConnectionClosedError {});
             }
 
             self.buffer.push_str(
@@ -61,10 +70,10 @@ impl ConnectionBuffer {
 
         let (header, rest) = split_once(&self.buffer, "\r\n");
         self.buffer = rest;
-        return header;
+        return Ok(header);
     }
 
-    async fn read_payload(&mut self, byte_count: u128) -> String {
+    async fn read_payload(&mut self, byte_count: u128) -> Result<String, ConnectionClosedError> {
         let byte_count = byte_count + 2; //The extra \r\n is not part of the byte count inside the header field
 
         if (self.buffer.len() as u128) < byte_count {
@@ -78,7 +87,7 @@ impl ConnectionBuffer {
 
             // Socket closed
             if n == 0 {
-                return "".to_string(); // TODO turn this in a result
+                return Err(ConnectionClosedError {});
             }
 
             self.buffer.push_str(
@@ -89,7 +98,7 @@ impl ConnectionBuffer {
         let buffer = self.buffer.clone();
         let (payload, rest) = buffer.split_at(byte_count as usize);
         self.buffer = rest.to_string();
-        payload.to_string()
+        Ok(payload.to_string())
     }
 }
 
@@ -107,20 +116,40 @@ impl Decoder {
         };
     }
 
-    pub async fn decode(&mut self) -> Command {
-        let header: String = self.connection.read_header().await;
-        let command = parse_header(header).unwrap(); // TODO
-        match command {
-            Command::Set(set_command) => {
-                let payload = self.connection.read_payload(set_command.byte_count).await;
-                let payload = parse_payload(payload, set_command.byte_count).unwrap();
+    pub async fn decode(&mut self) -> Result<Command, DecodeError> {
+        let header = self.connection.read_header().await;
+        let header = match header {
+            Ok(contents) => contents,
+            Err(_conection_closed) => return Err(DecodeError::ConnectionClosed), 
+        };
+        let parse_result = parse_header(header);
+        match parse_result {
+            Ok(command) => {
+                match command {
+                    Command::Set(set_command) => {
+                        let payload = self
+                            .connection
+                            .read_payload(set_command.byte_count)
+                            .await; 
+                        let payload = match payload {
+                            Ok(value) => value,
+                            Err(_error) => return Err(DecodeError::ConnectionClosed),
+                        };
 
-                return Command::Set(SetCommand {
-                    payload: payload,
-                    ..set_command
-                });
+                        let payload = match parse_payload(payload, set_command.byte_count){
+                            Ok(value) => value,
+                            Err(error) =>return Err(DecodeError::ParseError(error)),
+                        };
+
+                        return Ok(Command::Set(SetCommand {
+                            payload: payload,
+                            ..set_command
+                        }));
+                    }
+                    Command::Get(_) => return Ok(command),
+                }
             }
-            Command::Get(_) => return command,
+            Err(parse_error) => Err(DecodeError::ParseError(parse_error)),
         }
     }
 
@@ -140,27 +169,65 @@ fn parse_payload(mut payload: String, byte_count: u128) -> Result<String, ParseE
         return Ok(payload);
     }
 
-    return Err(ParseError);
+    return Err(ParseError::InvalidFormat(
+        "Expected \r\n at the end of string".to_string(),
+    ));
 }
 
 fn parse_header(header: String) -> Result<Command, ParseError> {
     let keywords: Vec<_> = header.split_whitespace().collect();
-    let command = keywords.get(0).ok_or(ParseError)?;
-    let key = keywords.get(1).ok_or(ParseError)?.to_string();
+    let command = keywords.get(0).expect(&format!(
+        "This should never panic: parseheader(args: {:?})",
+        keywords
+    ));
+    let key = keywords
+        .get(1)
+        .ok_or(ParseError::InvalidFormat("missing key".to_string()))?
+        .to_string();
     match command {
         &"get" => return Ok(Command::Get(GetCommand { key: key })),
         &"set" => {
-            let flags = match keywords.get(2).ok_or(ParseError)?.parse::<u16>() {
+            let flags = match keywords
+                .get(2)
+                .ok_or(ParseError::InvalidFormat(
+                    "Expected number for flags field of SET command".to_string(),
+                ))?
+                .parse::<u16>()
+            {
                 Ok(value) => value,
-                Err(_) => return Err(ParseError),
+                Err(_) => {
+                    return Err(ParseError::InvalidFormat(
+                        "flag is missing for SET command".to_string(),
+                    ))
+                }
             };
-            let exptime = match keywords.get(3).ok_or(ParseError)?.parse::<i128>() {
+            let exptime = match keywords
+                .get(3)
+                .ok_or(ParseError::InvalidFormat(
+                    "Expected number for exptime field of SET command".to_string(),
+                ))?
+                .parse::<i128>()
+            {
                 Ok(value) => value,
-                Err(_) => return Err(ParseError),
+                Err(_) => {
+                    return Err(ParseError::InvalidFormat(
+                        "exptime is missing for SET command".to_string(),
+                    ))
+                }
             };
-            let byte_count = match keywords.get(4).ok_or(ParseError)?.parse::<u128>() {
+            let byte_count = match keywords
+                .get(4)
+                .ok_or(ParseError::InvalidFormat(
+                    "Expected number for byte count field of SET command".to_string(),
+                ))?
+                .parse::<u128>()
+            {
                 Ok(value) => value,
-                Err(_) => return Err(ParseError),
+                Err(_) => {
+                    return Err(ParseError::InvalidFormat(
+                        "bytecount is missing for SET command".to_string(),
+                    ))
+                }
             };
             let _no_reply = keywords.get(5); // TODO
 
@@ -170,10 +237,10 @@ fn parse_header(header: String) -> Result<Command, ParseError> {
                 exptime,
                 byte_count,
                 no_reply: false,
-                payload: "".to_owned(), // TODO
+                payload: "".to_owned(), 
             }));
         }
-        _ => return Err(ParseError),
+        _ => return Err(ParseError::UnknownCommand(command.to_string())),
     };
 }
 
