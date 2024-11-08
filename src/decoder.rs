@@ -1,25 +1,27 @@
-use tokio::{io::AsyncReadExt, net::TcpStream};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 #[derive(Debug)]
-enum CommandType {
-    Get,
-    Set,
+pub enum Command {
+    Set(SetCommand),
+    Get(GetCommand),
 }
 
 #[derive(Debug)]
-struct Header {
-    command_name: CommandType,
-    key: String,
-    flags: u16,
-    exptime: i128,
-    byte_count: u128,
-    no_reply: bool,
+pub struct SetCommand {
+    pub key: String,
+    pub flags: u16,
+    pub exptime: i128,
+    pub byte_count: u128,
+    pub no_reply: bool,
+    pub payload: String,
 }
 
 #[derive(Debug)]
-pub struct Command {
-    header: Header,
-    payload: String,
+pub struct GetCommand {
+    pub key: String,
 }
 
 #[derive(Debug)]
@@ -107,11 +109,28 @@ impl Decoder {
 
     pub async fn decode(&mut self) -> Command {
         let header: String = self.connection.read_header().await;
-        let header = parse_header(header).unwrap(); // TODO
-        let payload = self.connection.read_payload(header.byte_count).await;
-        let payload = parse_payload(payload, header.byte_count).unwrap();
-        let command = Command { header, payload };
-        command
+        let command = parse_header(header).unwrap(); // TODO
+        match command {
+            Command::Set(set_command) => {
+                let payload = self.connection.read_payload(set_command.byte_count).await;
+                let payload = parse_payload(payload, set_command.byte_count).unwrap();
+
+                return Command::Set(SetCommand {
+                    payload: payload,
+                    ..set_command
+                });
+            }
+            Command::Get(_) => return command,
+        }
+    }
+
+    pub async fn send(&mut self, response: String) -> () {
+        let bytes = response.as_bytes();
+        self.connection
+            .connection
+            .write_all(bytes)
+            .await
+            .expect("failed to write data to socket");
     }
 }
 
@@ -124,37 +143,38 @@ fn parse_payload(mut payload: String, byte_count: u128) -> Result<String, ParseE
     return Err(ParseError);
 }
 
-fn parse_header(header: String) -> Result<Header, ParseError> {
+fn parse_header(header: String) -> Result<Command, ParseError> {
     let keywords: Vec<_> = header.split_whitespace().collect();
     let command = keywords.get(0).ok_or(ParseError)?;
-    let command = match command {
-        &"get" => CommandType::Get,
-        &"set" => CommandType::Set,
+    let key = keywords.get(1).ok_or(ParseError)?.to_string();
+    match command {
+        &"get" => return Ok(Command::Get(GetCommand { key: key })),
+        &"set" => {
+            let flags = match keywords.get(2).ok_or(ParseError)?.parse::<u16>() {
+                Ok(value) => value,
+                Err(_) => return Err(ParseError),
+            };
+            let exptime = match keywords.get(3).ok_or(ParseError)?.parse::<i128>() {
+                Ok(value) => value,
+                Err(_) => return Err(ParseError),
+            };
+            let byte_count = match keywords.get(4).ok_or(ParseError)?.parse::<u128>() {
+                Ok(value) => value,
+                Err(_) => return Err(ParseError),
+            };
+            let _no_reply = keywords.get(5); // TODO
+
+            return Ok(Command::Set(SetCommand {
+                key,
+                flags,
+                exptime,
+                byte_count,
+                no_reply: false,
+                payload: "".to_owned(), // TODO
+            }));
+        }
         _ => return Err(ParseError),
     };
-    let key = keywords.get(1).ok_or(ParseError)?.to_string();
-    let flags = match keywords.get(2).ok_or(ParseError)?.parse::<u16>() {
-        Ok(value) => value,
-        Err(_) => return Err(ParseError),
-    };
-    let exptime = match keywords.get(3).ok_or(ParseError)?.parse::<i128>() {
-        Ok(value) => value,
-        Err(_) => return Err(ParseError),
-    };
-    let byte_count = match keywords.get(4).ok_or(ParseError)?.parse::<u128>() {
-        Ok(value) => value,
-        Err(_) => return Err(ParseError),
-    };
-    let _no_reply = keywords.get(5); // TODO
-
-    return Ok(Header {
-        command_name: command,
-        key,
-        flags,
-        exptime,
-        byte_count,
-        no_reply: false,
-    });
 }
 
 fn split_once(in_string: &str, pat: &str) -> (String, String) {

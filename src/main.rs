@@ -1,49 +1,83 @@
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
 use const_format::concatcp;
+use decoder::{Command, GetCommand, SetCommand};
 use tokio::net::{TcpListener, TcpStream};
 mod decoder;
 
 const PORT: &'static str = "8012";
 const ADDRESS: &'static str = concatcp!("127.0.0.1:", PORT);
 
+struct DbEntry {
+    value: String,
+    flags: u16,
+    byte_count: u128,
+}
+
+struct Database {
+    map: Mutex<HashMap<String, DbEntry>>,
+}
+
 async fn start_tcp_server() {
     let listener = TcpListener::bind(ADDRESS).await.unwrap();
 
+    let db = Arc::new(Database {
+        map: Mutex::new(HashMap::new()),
+    });
+
     loop {
-        // The second item contains the IP and port of the new connection.
+        let db_ref = Arc::clone(&db);
         let (socket, _addr) = listener.accept().await.expect("couldn't get client");
         tokio::spawn(async move {
-            handle_connection(socket).await;
+            handle_connection(socket, db_ref).await;
         });
     }
 }
 
-async fn handle_connection(socket: TcpStream) {
+async fn handle_connection(socket: TcpStream, db: Arc<Database>) {
     let mut decoder = decoder::Decoder::new(socket);
     loop {
         let command = decoder.decode().await;
-        println!("Command recieved was {:?}", command)
+        println!("Command recieved was {:?}", command);
+        let response = execute_command(command, &db);
+        println!("Created response: {}", response);
+        decoder.send(response).await;
     }
+}
 
-    // loop {
-    //     let mut buf = vec![0; 1024];
+fn execute_command(command: Command, db: &Database) -> String {
+    let response = match command {
+        Command::Set(set_command) => handle_set(set_command, db),
+        Command::Get(get_command) => handle_get(get_command, db),
+    };
 
-    //     let n = socket
-    //         .read(&mut buf)
-    //         .await
-    //         .expect("failed to read data from socket");
+    return response;
+}
 
-    //     if n == 0 {
-    //         return;
-    //     }
+fn handle_get(command: GetCommand, db: &Database) -> String {
+    let map = db.map.lock().unwrap();
+    match map.get(&command.key) {
+        Some(entry) => format!(
+            "VALUE {} {} {}\r\n{}\r\nEND\r\n",
+            command.key, entry.flags, entry.byte_count, entry.value
+        ),
+        None => "END".to_string(),
+    }
+}
 
-    //     let message_string = core::str::from_utf8(&buf[0..n]).expect("These bytes cannot be converted to UTF-8");
-    //     println!("{:?}", message_string);
+fn handle_set(command: SetCommand, db: &Database) -> String {
+    let mut map = db.map.lock().unwrap();
+    let entry = DbEntry {
+        value: command.payload,
+        flags: command.flags,
+        byte_count: command.byte_count,
+    };
+    map.insert(command.key, entry);
 
-    //     socket
-    //         .write_all(b"+PONG\r\n")
-    //         .await
-    //         .expect("failed to write data to socket");
-    // }
+    return "STORED\r\n".to_string();
 }
 
 #[tokio::main]
