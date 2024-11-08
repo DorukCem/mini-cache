@@ -190,42 +190,42 @@ fn parse_header(header: String) -> Result<Command, ParseError> {
             let flags = match keywords
                 .get(2)
                 .ok_or(ParseError::InvalidFormat(
-                    "Expected number for flags field of SET command".to_string(),
+                    "flag is missing for SET command".to_string(),
                 ))?
                 .parse::<u16>()
             {
                 Ok(value) => value,
                 Err(_) => {
                     return Err(ParseError::InvalidFormat(
-                        "flag is missing for SET command".to_string(),
+                        "Expected number for flags field of SET command".to_string(),
                     ))
                 }
             };
             let exptime = match keywords
                 .get(3)
                 .ok_or(ParseError::InvalidFormat(
-                    "Expected number for exptime field of SET command".to_string(),
+                    "exptime is missing for SET command".to_string(),
                 ))?
                 .parse::<i128>()
             {
                 Ok(value) => value,
                 Err(_) => {
                     return Err(ParseError::InvalidFormat(
-                        "exptime is missing for SET command".to_string(),
+                        "Expected number for exptime field of SET command".to_string(),
                     ))
                 }
             };
             let byte_count = match keywords
                 .get(4)
                 .ok_or(ParseError::InvalidFormat(
-                    "Expected number for byte count field of SET command".to_string(),
+                    "bytecount is missing for SET command".to_string(),
                 ))?
                 .parse::<u128>()
             {
                 Ok(value) => value,
                 Err(_) => {
                     return Err(ParseError::InvalidFormat(
-                        "bytecount is missing for SET command".to_string(),
+                        "Expected number for byte count field of SET command".to_string(),
                     ))
                 }
             };
