@@ -78,7 +78,7 @@ def test_concurrect(process: subprocess.Popen[bytes]):
                 random_val = random.randint(0, 9)
 
                 socket.sendall(b"set value 0 0 1\r\n")
-                socket.sendall((f"{random_val}\r\n").encode('utf-8'))
+                socket.sendall((f"{random_val}\r\n").encode("utf-8"))
                 data = socket.recv(1024)
                 assert (
                     data.decode("utf-8") == "STORED\r\n"
@@ -99,11 +99,49 @@ def test_concurrect(process: subprocess.Popen[bytes]):
     print("---- Test Concurrent Passed ----")
 
 
+def test_expiration(process):
+    try:
+        socket = tcp_connection()
+
+        # Set a key with a 4-second expiration time
+        socket.sendall(b"set tempkey 0 4 5\r\n")
+        socket.sendall(b"hello\r\n")
+        data = socket.recv(1024)
+        assert (
+            data.decode("utf-8") == "STORED\r\n"
+        ), f"Expected 'STORED\r\n', but got {data.decode('utf-8')}"
+
+        # Retrieve the key before expiration
+        socket.sendall(b"get tempkey\r\n")
+        data = socket.recv(1024)
+        expected_response = "VALUE tempkey 0 5\r\nhello\r\nEND\r\n"
+        assert (
+            data.decode("utf-8") == expected_response
+        ), f"Expected '{expected_response}', but got {data.decode('utf-8')}"
+
+        # Wait for expiration
+        time.sleep(4.1)
+
+        # Attempt to retrieve the key after expiration
+        socket.sendall(b"get tempkey\r\n")
+        data = socket.recv(1024)
+        expected_response = "END\r\n"
+        assert (
+            data.decode("utf-8") == expected_response
+        ), f"Expected '{expected_response}', but got {data.decode('utf-8')}"
+
+        print("---- Test Expiration Passed ----")
+
+    finally:
+        socket.close()
+
+
 try:
     process = start_process()
     print("Process Started, starting tests ...")
     test_commands(process)
     test_concurrect(process)
+    test_expiration(process)
     print("--- All Tests Passed ---")
 finally:
     process.terminate()

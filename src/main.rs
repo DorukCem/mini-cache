@@ -1,10 +1,10 @@
+use const_format::concatcp;
+use decoder::{Command, GetCommand, SetCommand};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
 };
-
-use const_format::concatcp;
-use decoder::{Command, GetCommand, SetCommand};
 use tokio::net::{TcpListener, TcpStream};
 mod decoder;
 
@@ -15,6 +15,7 @@ struct DbEntry {
     value: String,
     flags: u16,
     byte_count: u128,
+    valid_until: Option<SystemTime>,
 }
 
 struct Database {
@@ -74,22 +75,56 @@ fn execute_command(command: Command, db: &Database) -> String {
 }
 
 fn handle_get(command: GetCommand, db: &Database) -> String {
-    let map = db.map.lock().unwrap();
+    let mut map = db.map.lock().unwrap();
     match map.get(&command.key) {
-        Some(entry) => format!(
-            "VALUE {} {} {}\r\n{}\r\nEND\r\n",
-            command.key, entry.flags, entry.byte_count, entry.value
-        ),
+        Some(entry) => {
+            if let Some(valid_until) = entry.valid_until {
+                println!("valid until:{:?}  sytem_time {:?}", valid_until, SystemTime::now());
+
+                if valid_until < SystemTime::now() {
+                    // Key expired
+                    map.remove(&command.key);
+                    return "END\r\n".to_string()
+                }
+            }
+
+            format!(
+                "VALUE {} {} {}\r\n{}\r\nEND\r\n",
+                command.key, entry.flags, entry.byte_count, entry.value
+            )
+        }
         None => "END\r\n".to_string(),
     }
 }
 
 fn handle_set(command: SetCommand, db: &Database) -> String {
+    if command.exptime < 0 {
+        // If a negative value is given the item is immediately expired.
+        return "STORED\r\n".to_string();
+    }
+
+    let valid_until = if command.exptime != 0 {
+        Some(
+            SystemTime::now()
+                + Duration::new(
+                    command
+                        .exptime
+                        .try_into()
+                        .expect("This should always fit since we discard negatives"),
+                    0,
+                ),
+        )
+    } else {
+        None
+    };
+
     let mut map = db.map.lock().unwrap();
+
     let entry = DbEntry {
         value: command.payload,
         flags: command.flags,
         byte_count: command.byte_count,
+        valid_until,
     };
     map.insert(command.key, entry);
 
