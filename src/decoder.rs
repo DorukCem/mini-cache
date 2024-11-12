@@ -5,12 +5,12 @@ use tokio::{
 
 #[derive(Debug)]
 pub enum Command {
-    Set(SetCommand),
+    Set(StorageCommand),
     Get(GetCommand),
 }
 
 #[derive(Debug)]
-pub struct SetCommand {
+pub struct StorageCommand {
     pub key: String,
     pub flags: u16,
     pub exptime: i128,
@@ -32,9 +32,9 @@ pub enum ParseError {
 #[derive(Debug)]
 pub struct ConnectionClosedError {}
 
-pub enum DecodeError{
+pub enum DecodeError {
     ConnectionClosed,
-    ParseError(ParseError)
+    ParseError(ParseError),
 }
 struct ConnectionBuffer {
     connection: TcpStream,
@@ -120,35 +120,19 @@ impl Decoder {
         let header = self.connection.read_header().await;
         let header = match header {
             Ok(contents) => contents,
-            Err(_conection_closed) => return Err(DecodeError::ConnectionClosed), 
+            Err(_conection_closed) => return Err(DecodeError::ConnectionClosed),
         };
         let parse_result = parse_header(header);
         match parse_result {
-            Ok(command) => {
-                match command {
-                    Command::Set(set_command) => {
-                        let payload = self
-                            .connection
-                            .read_payload(set_command.byte_count)
-                            .await; 
-                        let payload = match payload {
-                            Ok(value) => value,
-                            Err(_error) => return Err(DecodeError::ConnectionClosed),
-                        };
-
-                        let payload = match parse_payload(payload, set_command.byte_count){
-                            Ok(value) => value,
-                            Err(error) =>return Err(DecodeError::ParseError(error)),
-                        };
-
-                        return Ok(Command::Set(SetCommand {
-                            payload: payload,
-                            ..set_command
-                        }));
-                    }
-                    Command::Get(_) => return Ok(command),
+            Ok(command) => match command {
+                Command::Set(set_command) => {
+                    return self
+                        .parse_storage_command_payload(set_command)
+                        .await
+                        .map(|x| Command::Set(x))
                 }
-            }
+                Command::Get(_) => return Ok(command),
+            },
             Err(parse_error) => Err(DecodeError::ParseError(parse_error)),
         }
     }
@@ -160,6 +144,27 @@ impl Decoder {
             .write_all(bytes)
             .await
             .expect("failed to write data to socket");
+    }
+
+    async fn parse_storage_command_payload(
+        &mut self,
+        set_command: StorageCommand,
+    ) -> Result<StorageCommand, DecodeError> {
+        let payload = self.connection.read_payload(set_command.byte_count).await;
+        let payload = match payload {
+            Ok(value) => value,
+            Err(_error) => return Err(DecodeError::ConnectionClosed),
+        };
+
+        let payload = match parse_payload(payload, set_command.byte_count) {
+            Ok(value) => value,
+            Err(error) => return Err(DecodeError::ParseError(error)),
+        };
+
+        return Ok(StorageCommand {
+            payload: payload,
+            ..set_command
+        });
     }
 }
 
@@ -231,13 +236,13 @@ fn parse_header(header: String) -> Result<Command, ParseError> {
             };
             let _no_reply = keywords.get(5); // TODO
 
-            return Ok(Command::Set(SetCommand {
+            return Ok(Command::Set(StorageCommand {
                 key,
                 flags,
                 exptime,
                 byte_count,
                 no_reply: false,
-                payload: "".to_owned(), 
+                payload: "".to_owned(),
             }));
         }
         _ => return Err(ParseError::UnknownCommand(command.to_string())),

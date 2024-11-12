@@ -1,5 +1,5 @@
 use const_format::concatcp;
-use decoder::{Command, GetCommand, SetCommand};
+use decoder::{Command, GetCommand, StorageCommand};
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -97,7 +97,7 @@ fn handle_get(command: GetCommand, db: &Database) -> String {
     }
 }
 
-fn handle_set(command: SetCommand, db: &Database) -> String {
+fn handle_set(command: StorageCommand, db: &Database) -> String {
     if command.exptime < 0 {
         // If a negative value is given the item is immediately expired.
         return "STORED\r\n".to_string();
