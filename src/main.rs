@@ -56,7 +56,7 @@ async fn handle_connection(socket: TcpStream, db: Arc<Database>) {
                     decoder::ParseError::InvalidFormat(client_error) => {
                         format!("CLIENT_ERROR {}\r\n", client_error)
                     }
-                    decoder::ParseError::UnknownCommand(_) => "ERROR\r\n".to_owned(),
+                    decoder::ParseError::UnknownCommand(_message) => "ERROR\r\n".to_owned(),
                 },
             },
         };
@@ -69,9 +69,102 @@ fn execute_command(command: Command, db: &Database) -> String {
     let response = match command {
         Command::Set(set_command) => handle_set(set_command, db),
         Command::Get(get_command) => handle_get(get_command, db),
+        Command::Add(add_command) => handle_add(add_command, db),
+        Command::Replace(replace_command) => handle_replace(replace_command, db),
     };
 
     return response;
+}
+
+fn handle_replace(command: StorageCommand, db: &Database) -> String {
+    let mut map = db.map.lock().unwrap();
+    if let Some(entry) = map.get(&command.key) {
+        if let Some(valid_until) = entry.valid_until {
+            if valid_until > SystemTime::now() {
+                // Replace should only act when where is already an active key
+                return "STORED\r\n".to_string();
+            }
+        }
+    }
+    "NOT_STORED\r\n".to_string()
+}
+
+fn handle_add(command: StorageCommand, db: &Database) -> String {
+    let mut map = db.map.lock().unwrap();
+    if let Some(entry) = map.get(&command.key) {
+        if let Some(valid_until) = entry.valid_until {
+            if valid_until > SystemTime::now() {
+                // Add commmand should not take place because there is an active key
+                if command.exptime < 0 {
+                    // If a negative value is given the item is immediately expired.
+                    return "STORED\r\n".to_string();
+                }
+
+                let valid_until = if command.exptime != 0 {
+                    Some(
+                        SystemTime::now()
+                            + Duration::new(
+                                command
+                                    .exptime
+                                    .try_into()
+                                    .expect("This should always fit since we discard negatives"),
+                                0,
+                            ),
+                    )
+                } else {
+                    None
+                };
+
+                let entry = DbEntry {
+                    value: command.payload,
+                    flags: command.flags,
+                    byte_count: command.byte_count,
+                    valid_until,
+                };
+                map.insert(command.key, entry);
+
+                if command.no_reply {
+                    todo!()
+                }
+
+                return "STORED\r\n".to_string();
+            }
+        }
+    }
+
+    if command.exptime < 0 {
+        // If a negative value is given the item is immediately expired.
+        return "STORED\r\n".to_string();
+    }
+
+    let valid_until = if command.exptime != 0 {
+        Some(
+            SystemTime::now()
+                + Duration::new(
+                    command
+                        .exptime
+                        .try_into()
+                        .expect("This should always fit since we discard negatives"),
+                    0,
+                ),
+        )
+    } else {
+        None
+    };
+
+    let entry = DbEntry {
+        value: command.payload,
+        flags: command.flags,
+        byte_count: command.byte_count,
+        valid_until,
+    };
+    map.insert(command.key, entry);
+
+    if command.no_reply {
+        todo!()
+    }
+
+    return "STORED\r\n".to_string();
 }
 
 fn handle_get(command: GetCommand, db: &Database) -> String {
@@ -79,12 +172,10 @@ fn handle_get(command: GetCommand, db: &Database) -> String {
     match map.get(&command.key) {
         Some(entry) => {
             if let Some(valid_until) = entry.valid_until {
-                println!("valid until:{:?}  sytem_time {:?}", valid_until, SystemTime::now());
-
                 if valid_until < SystemTime::now() {
                     // Key expired
                     map.remove(&command.key);
-                    return "END\r\n".to_string()
+                    return "END\r\n".to_string();
                 }
             }
 
@@ -127,6 +218,10 @@ fn handle_set(command: StorageCommand, db: &Database) -> String {
         valid_until,
     };
     map.insert(command.key, entry);
+
+    if command.no_reply {
+        todo!()
+    }
 
     return "STORED\r\n".to_string();
 }

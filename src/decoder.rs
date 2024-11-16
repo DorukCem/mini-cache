@@ -7,6 +7,8 @@ use tokio::{
 pub enum Command {
     Set(StorageCommand),
     Get(GetCommand),
+    Add(StorageCommand),
+    Replace(StorageCommand),
 }
 
 #[derive(Debug)]
@@ -132,6 +134,18 @@ impl Decoder {
                         .map(|x| Command::Set(x))
                 }
                 Command::Get(_) => return Ok(command),
+                Command::Add(add_command) => {
+                    return self
+                        .parse_storage_command_payload(add_command)
+                        .await
+                        .map(|x| Command::Add(x))
+                }
+                Command::Replace(replace_command) => {
+                    return self
+                        .parse_storage_command_payload(replace_command)
+                        .await
+                        .map(|x| Command::Replace(x))
+                }
             },
             Err(parse_error) => Err(DecodeError::ParseError(parse_error)),
         }
@@ -148,22 +162,22 @@ impl Decoder {
 
     async fn parse_storage_command_payload(
         &mut self,
-        set_command: StorageCommand,
+        command: StorageCommand,
     ) -> Result<StorageCommand, DecodeError> {
-        let payload = self.connection.read_payload(set_command.byte_count).await;
+        let payload = self.connection.read_payload(command.byte_count).await;
         let payload = match payload {
             Ok(value) => value,
             Err(_error) => return Err(DecodeError::ConnectionClosed),
         };
 
-        let payload = match parse_payload(payload, set_command.byte_count) {
+        let payload = match parse_payload(payload, command.byte_count) {
             Ok(value) => value,
             Err(error) => return Err(DecodeError::ParseError(error)),
         };
 
         return Ok(StorageCommand {
             payload: payload,
-            ..set_command
+            ..command
         });
     }
 }
