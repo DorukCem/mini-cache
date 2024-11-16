@@ -11,6 +11,7 @@ mod decoder;
 const PORT: &'static str = "8012";
 const ADDRESS: &'static str = concatcp!("127.0.0.1:", PORT);
 
+#[derive(Debug)]
 struct DbEntry {
     value: String,
     flags: u16,
@@ -71,9 +72,37 @@ fn execute_command(command: Command, db: &Database) -> String {
         Command::Get(get_command) => handle_get(get_command, db),
         Command::Add(add_command) => handle_add(add_command, db),
         Command::Replace(replace_command) => handle_replace(replace_command, db),
+        Command::Prepend(prepend_command) => handle_prepend(prepend_command, db),
+        Command::Append(append_command) => handle_append(append_command, db),
     };
 
     return response;
+}
+
+fn handle_append(command: StorageCommand, db: &Database) -> String {
+    let mut map = db.map.lock().unwrap();
+
+    if is_key_valid(&command.key, &map) {
+        let value = map.get_mut(&command.key).expect("Already checked if valid");
+        value.byte_count += command.byte_count;
+        value.value.push_str(command.payload.as_str());
+        return "STORED\r\n".to_string();
+    }
+
+    "NOT_STORED\r\n".to_string()
+}
+
+fn handle_prepend(command: StorageCommand, db: &Database) -> String {
+    let mut map = db.map.lock().unwrap();
+
+    if is_key_valid(&command.key, &map) {
+        let value = map.get_mut(&command.key).expect("Already checked if valid");
+        value.byte_count += command.byte_count;
+        value.value = command.payload + (value.value).as_str();
+        return "STORED\r\n".to_string();
+    }
+
+    "NOT_STORED\r\n".to_string()
 }
 fn handle_replace(command: StorageCommand, db: &Database) -> String {
     let mut map = db.map.lock().unwrap();

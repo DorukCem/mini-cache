@@ -108,6 +108,61 @@ def test_commands(process):
             "Replace command failed when replacing non-existing key",
         )
 
+        # Test: Append command (existing key)
+        assert_response(
+            send_command(socket, "append test 0 0 4\r\n", "more\r\n"),
+            "STORED\r\n",
+            "Append command failed for existing key",
+        )
+        assert_response(
+            send_command(socket, "get test\r\n"),
+            "VALUE test 0 8\r\njohnmore\r\nEND\r\n",
+            "Get command failed after append",
+        )
+
+        # Test: Prepend and Append command (existing key)
+        assert_response(
+            send_command(socket, "set middle 0 0 4\r\n", "data\r\n"),
+            "STORED\r\n",
+            "set command failed",
+        )
+
+        assert_response(
+            send_command(socket, "prepend middle 0 0 3\r\n", "pre\r\n"),
+            "STORED\r\n",
+            "Prepend command failed for existing key",
+        )
+        assert_response(
+            send_command(socket, "get middle\r\n"),
+            "VALUE middle 0 7\r\npredata\r\nEND\r\n",
+            "Get command failed after prepend",
+        )
+
+        assert_response(
+            send_command(socket, "append middle 0 0 3\r\n", "end\r\n"),
+            "STORED\r\n",
+            "append command failed for existing key",
+        )
+        assert_response(
+            send_command(socket, "get middle\r\n"),
+            "VALUE middle 0 10\r\npredataend\r\nEND\r\n",
+            "Get command failed after append",
+        )
+
+        # Test: Append command (non-existing key)
+        assert_response(
+            send_command(socket, "append foo 0 0 4\r\n", "test\r\n"),
+            "NOT_STORED\r\n",
+            "Append command failed for non-existing key",
+        )
+
+        # Test: Prepend command (non-existing key)
+        assert_response(
+            send_command(socket, "prepend foo 0 0 4\r\n", "test\r\n"),
+            "NOT_STORED\r\n",
+            "Prepend command failed for non-existing key",
+        )
+
         print("---- Test Commands Passed ----")
 
     finally:

@@ -5,10 +5,12 @@ use tokio::{
 
 #[derive(Debug)]
 pub enum Command {
-    Set(StorageCommand),
     Get(GetCommand),
+    Set(StorageCommand),
     Add(StorageCommand),
     Replace(StorageCommand),
+    Prepend(StorageCommand),
+    Append(StorageCommand),
 }
 
 #[derive(Debug)]
@@ -146,6 +148,18 @@ impl Decoder {
                         .await
                         .map(|x| Command::Replace(x))
                 }
+                Command::Prepend(prepend_command) =>  {
+                    return self
+                        .parse_storage_command_payload(prepend_command)
+                        .await
+                        .map(|x| Command::Prepend(x))
+                }
+                Command::Append(append_command) =>  {
+                    return self
+                        .parse_storage_command_payload(append_command)
+                        .await
+                        .map(|x| Command::Append(x))
+                }
             },
             Err(parse_error) => Err(DecodeError::ParseError(parse_error)),
         }
@@ -206,14 +220,16 @@ fn parse_header(header: String) -> Result<Command, ParseError> {
         .ok_or(ParseError::InvalidFormat("Missing key".to_string()))?
         .to_string();
 
-    match *command {
+    match command.to_lowercase().as_str() {
         "get" => Ok(Command::Get(GetCommand { key })),
-        "set" | "add" | "replace" => {
+        "set" | "add" | "replace" | "append" | "prepend" => {
             let storage_command = parse_storage_command(&keywords, key)?;
             match *command {
                 "set" => Ok(Command::Set(storage_command)),
                 "add" => Ok(Command::Add(storage_command)),
                 "replace" => Ok(Command::Replace(storage_command)),
+                "append" => Ok(Command::Append(storage_command)),
+                "prepend" => Ok(Command::Prepend(storage_command)),
                 _ => unreachable!(),
             }
         }
