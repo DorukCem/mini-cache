@@ -194,6 +194,9 @@ fn parse_payload(mut payload: String, byte_count: u128) -> Result<String, ParseE
 }
 
 fn parse_header(header: String) -> Result<Command, ParseError> {
+    // ? I think we cannot detect missing \r\n in header because we must read untill we see \r\n
+    // ? It is up to the client to not mess this up. 
+
     let keywords: Vec<_> = header.split_whitespace().collect();
     let command = keywords
         .get(0)
