@@ -75,96 +75,54 @@ fn execute_command(command: Command, db: &Database) -> String {
 
     return response;
 }
-
 fn handle_replace(command: StorageCommand, db: &Database) -> String {
     let mut map = db.map.lock().unwrap();
-    if let Some(entry) = map.get(&command.key) {
-        if let Some(valid_until) = entry.valid_until {
-            if valid_until > SystemTime::now() {
-                // Replace should only act when where is already an active key
-                return "STORED\r\n".to_string();
-            }
-        }
+
+    if is_key_valid(&command.key, &map) {
+        insert_entry(
+            command.key,
+            command.payload,
+            command.flags,
+            command.byte_count,
+            command.exptime,
+            &mut map,
+        );
+        return "STORED\r\n".to_string();
     }
+
     "NOT_STORED\r\n".to_string()
 }
 
 fn handle_add(command: StorageCommand, db: &Database) -> String {
     let mut map = db.map.lock().unwrap();
-    if let Some(entry) = map.get(&command.key) {
-        if let Some(valid_until) = entry.valid_until {
-            if valid_until > SystemTime::now() {
-                // Add commmand should not take place because there is an active key
-                if command.exptime < 0 {
-                    // If a negative value is given the item is immediately expired.
-                    return "STORED\r\n".to_string();
-                }
 
-                let valid_until = if command.exptime != 0 {
-                    Some(
-                        SystemTime::now()
-                            + Duration::new(
-                                command
-                                    .exptime
-                                    .try_into()
-                                    .expect("This should always fit since we discard negatives"),
-                                0,
-                            ),
-                    )
-                } else {
-                    None
-                };
-
-                let entry = DbEntry {
-                    value: command.payload,
-                    flags: command.flags,
-                    byte_count: command.byte_count,
-                    valid_until,
-                };
-                map.insert(command.key, entry);
-
-                if command.no_reply {
-                    todo!()
-                }
-
-                return "STORED\r\n".to_string();
-            }
-        }
+    if is_key_valid(&command.key, &map) {
+        return "NOT_STORED\r\n".to_string();
     }
 
-    if command.exptime < 0 {
-        // If a negative value is given the item is immediately expired.
-        return "STORED\r\n".to_string();
-    }
+    insert_entry(
+        command.key,
+        command.payload,
+        command.flags,
+        command.byte_count,
+        command.exptime,
+        &mut map,
+    );
+    "STORED\r\n".to_string()
+}
 
-    let valid_until = if command.exptime != 0 {
-        Some(
-            SystemTime::now()
-                + Duration::new(
-                    command
-                        .exptime
-                        .try_into()
-                        .expect("This should always fit since we discard negatives"),
-                    0,
-                ),
-        )
-    } else {
-        None
-    };
+fn handle_set(command: StorageCommand, db: &Database) -> String {
+    let mut map = db.map.lock().unwrap();
 
-    let entry = DbEntry {
-        value: command.payload,
-        flags: command.flags,
-        byte_count: command.byte_count,
-        valid_until,
-    };
-    map.insert(command.key, entry);
-
-    if command.no_reply {
-        todo!()
-    }
-
-    return "STORED\r\n".to_string();
+    insert_entry(
+        command.key,
+        command.payload,
+        command.flags,
+        command.byte_count,
+        command.exptime,
+        &mut map,
+    );
+    "STORED\r\n".to_string()
 }
 
 fn handle_get(command: GetCommand, db: &Database) -> String {
@@ -188,42 +146,46 @@ fn handle_get(command: GetCommand, db: &Database) -> String {
     }
 }
 
-fn handle_set(command: StorageCommand, db: &Database) -> String {
-    if command.exptime < 0 {
-        // If a negative value is given the item is immediately expired.
-        return "STORED\r\n".to_string();
+fn is_key_valid(key: &str, map: &HashMap<String, DbEntry>) -> bool {
+    // The keys are lazlily evaluated and removed
+    if let Some(entry) = map.get(key) {
+        if let Some(valid_until) = entry.valid_until {
+            if valid_until > SystemTime::now() {
+                return true;
+            }
+        }
     }
+    false
+}
 
-    let valid_until = if command.exptime != 0 {
-        Some(
-            SystemTime::now()
-                + Duration::new(
-                    command
-                        .exptime
-                        .try_into()
-                        .expect("This should always fit since we discard negatives"),
-                    0,
-                ),
-        )
+fn calculate_valid_until(exptime: i128) -> Option<SystemTime> {
+    if exptime > 0 {
+        Some(SystemTime::now() + Duration::new(exptime.try_into().unwrap(), 0))
     } else {
         None
-    };
+    }
+}
 
-    let mut map = db.map.lock().unwrap();
-
-    let entry = DbEntry {
-        value: command.payload,
-        flags: command.flags,
-        byte_count: command.byte_count,
-        valid_until,
-    };
-    map.insert(command.key, entry);
-
-    if command.no_reply {
-        todo!()
+fn insert_entry(
+    key: String,
+    payload: String,
+    flags: u16,
+    byte_count: u128,
+    exptime: i128,
+    map: &mut HashMap<String, DbEntry>,
+) {
+    if exptime < 0 {
+        return;
     }
 
-    return "STORED\r\n".to_string();
+    let valid_until = calculate_valid_until(exptime);
+    let entry = DbEntry {
+        value: payload,
+        flags,
+        byte_count,
+        valid_until,
+    };
+    map.insert(key, entry);
 }
 
 #[tokio::main]
