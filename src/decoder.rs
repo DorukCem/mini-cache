@@ -195,72 +195,58 @@ fn parse_payload(mut payload: String, byte_count: u128) -> Result<String, ParseE
 
 fn parse_header(header: String) -> Result<Command, ParseError> {
     let keywords: Vec<_> = header.split_whitespace().collect();
-    let command = keywords.get(0).expect(&format!(
-        "This should never panic: parseheader(args: {:?})",
-        keywords
-    ));
+    let command = keywords
+        .get(0)
+        .ok_or(ParseError::InvalidFormat("Missing command".to_string()))?;
     let key = keywords
         .get(1)
-        .ok_or(ParseError::InvalidFormat("missing key".to_string()))?
+        .ok_or(ParseError::InvalidFormat("Missing key".to_string()))?
         .to_string();
-    match command {
-        &"get" => return Ok(Command::Get(GetCommand { key: key })),
-        &"set" => {
-            let flags = match keywords
-                .get(2)
-                .ok_or(ParseError::InvalidFormat(
-                    "flag is missing for storage command".to_string(),
-                ))?
-                .parse::<u16>()
-            {
-                Ok(value) => value,
-                Err(_) => {
-                    return Err(ParseError::InvalidFormat(
-                        "Expected number for flags field of storage command".to_string(),
-                    ))
-                }
-            };
-            let exptime = match keywords
-                .get(3)
-                .ok_or(ParseError::InvalidFormat(
-                    "exptime is missing for storage command".to_string(),
-                ))?
-                .parse::<i128>()
-            {
-                Ok(value) => value,
-                Err(_) => {
-                    return Err(ParseError::InvalidFormat(
-                        "Expected number for exptime field of storage command".to_string(),
-                    ))
-                }
-            };
-            let byte_count = match keywords
-                .get(4)
-                .ok_or(ParseError::InvalidFormat(
-                    "bytecount is missing for storage command".to_string(),
-                ))?
-                .parse::<u128>()
-            {
-                Ok(value) => value,
-                Err(_) => {
-                    return Err(ParseError::InvalidFormat(
-                        "Expected number for byte count field of storage command".to_string(),
-                    ))
-                }
-            };
-            let _no_reply = keywords.get(5); // TODO
 
-            return Ok(Command::Set(StorageCommand {
-                key,
-                flags,
-                exptime,
-                byte_count,
-                no_reply: false,
-                payload: "".to_owned(),
-            }));
+    match *command {
+        "get" => Ok(Command::Get(GetCommand { key })),
+        "set" | "add" | "replace" => {
+            let storage_command = parse_storage_command(&keywords, key)?;
+            match *command {
+                "set" => Ok(Command::Set(storage_command)),
+                "add" => Ok(Command::Add(storage_command)),
+                "replace" => Ok(Command::Replace(storage_command)),
+                _ => unreachable!(),
+            }
         }
-        _ => return Err(ParseError::UnknownCommand(command.to_string())),
-    };
+        _ => Err(ParseError::UnknownCommand(command.to_string())),
+    }
+}
+
+fn parse_storage_command(keywords: &[&str], key: String) -> Result<StorageCommand, ParseError> {
+    let flags = parse_field::<u16>(keywords, 2, "flags")?;
+    let exptime = parse_field::<i128>(keywords, 3, "exptime")?;
+    let byte_count = parse_field::<u128>(keywords, 4, "byte count")?;
+    let no_reply = keywords.get(5).is_some(); // If there's a 6th keyword, assume "no_reply"
+
+    Ok(StorageCommand {
+        key,
+        flags,
+        exptime,
+        byte_count,
+        no_reply,
+        payload: "".to_owned(),
+    })
+}
+
+fn parse_field<T: std::str::FromStr>(
+    keywords: &[&str],
+    index: usize,
+    field_name: &str,
+) -> Result<T, ParseError> {
+    keywords
+        .get(index)
+        .ok_or(ParseError::InvalidFormat(format!(
+            "{} is missing",
+            field_name
+        )))?
+        .parse::<T>()
+        .map_err(|_parse_number_errror| ParseError::InvalidFormat(format!("Expected a valid {} value", field_name)))
 }
 
 fn split_once(in_string: &str, pat: &str) -> (String, String) {

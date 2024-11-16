@@ -150,10 +150,11 @@ fn is_key_valid(key: &str, map: &HashMap<String, DbEntry>) -> bool {
     // The keys are lazlily evaluated and removed
     if let Some(entry) = map.get(key) {
         if let Some(valid_until) = entry.valid_until {
-            if valid_until > SystemTime::now() {
-                return true;
+            if valid_until < SystemTime::now() {
+                return false;
             }
         }
+        return true
     }
     false
 }

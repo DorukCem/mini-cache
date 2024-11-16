@@ -61,6 +61,47 @@ def test_commands(process):
             data.decode("utf-8") == "ERROR\r\n"
         ), f"Expected 'ERROR\r\n', but got {data.decode('utf-8')}"
 
+        # Test: Add command (new key)
+        socket.sendall(b"add newkey 0 0 4\r\n")
+        socket.sendall(b"data\r\n")
+        data_add_newkey = socket.recv(1024)
+        assert (
+            data_add_newkey.decode("utf-8") == "STORED\r\n"
+        ), f"Expected 'STORED\r\n', but got {data_add_newkey.decode('utf-8')}"
+
+        # Test: Add command (existing key)
+        socket.sendall(b"add test 0 0 4\r\n")
+        socket.sendall(b"test\r\n")
+        data_add_existing = socket.recv(1024)
+        assert (
+            data_add_existing.decode("utf-8") == "NOT_STORED\r\n"
+        ), f"Expected 'NOT_STORED\r\n', but got {data_add_existing.decode('utf-8')}"
+
+        # Test: Replace command (existing key)
+        socket.sendall(b"replace test 0 0 4\r\n")
+        socket.sendall(b"john\r\n")
+        data_replace_existing = socket.recv(1024)
+        assert (
+            data_replace_existing.decode("utf-8") == "STORED\r\n"
+        ), f"Expected 'STORED\r\n', but got {data_replace_existing.decode('utf-8')}"
+
+        # Verify replaced value using get
+        socket.sendall(b"get test\r\n")
+        data_replace_verify = socket.recv(1024)
+        expected_replace_response = "VALUE test 0 4\r\njohn\r\nEND\r\n"
+        assert (
+            data_replace_verify.decode("utf-8") == expected_replace_response
+        ), f"Expected '{expected_replace_response}', but got {data_replace_verify.decode('utf-8')}"
+
+        # Test: Replace command (non-existing key)
+        socket.sendall(b"replace test2 0 0 4\r\n")
+        socket.sendall(b"data\r\n")
+        data_replace_nonexisting = socket.recv(1024)
+        assert (
+            data_replace_nonexisting.decode("utf-8") == "NOT_STORED\r\n"
+        ), f"Expected 'NOT_STORED\r\n', but got {data_replace_nonexisting.decode('utf-8')}"
+
+
         print("---- Test Commands Passed ----")
 
     finally:
