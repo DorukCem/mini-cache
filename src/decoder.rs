@@ -18,8 +18,8 @@ pub struct StorageCommand {
     pub key: String,
     pub flags: u16,
     pub exptime: i128,
-    pub byte_count: u128,
-    pub no_reply: bool,
+    pub byte_count: usize,
+    pub no_reply: bool, // I did not implement any functionality for this
     pub payload: String,
 }
 
@@ -77,10 +77,10 @@ impl ConnectionBuffer {
         return Ok(header);
     }
 
-    async fn read_payload(&mut self, byte_count: u128) -> Result<String, ConnectionClosedError> {
+    async fn read_payload(&mut self, byte_count: usize) -> Result<String, ConnectionClosedError> {
         let byte_count = byte_count + 2; //The extra \r\n is not part of the byte count inside the header field
 
-        if (self.buffer.len() as u128) < byte_count {
+        if self.buffer.len() < byte_count {
             let mut data = vec![0; 1024];
 
             let n = self
@@ -148,13 +148,13 @@ impl Decoder {
                         .await
                         .map(|x| Command::Replace(x))
                 }
-                Command::Prepend(prepend_command) =>  {
+                Command::Prepend(prepend_command) => {
                     return self
                         .parse_storage_command_payload(prepend_command)
                         .await
                         .map(|x| Command::Prepend(x))
                 }
-                Command::Append(append_command) =>  {
+                Command::Append(append_command) => {
                     return self
                         .parse_storage_command_payload(append_command)
                         .await
@@ -178,16 +178,14 @@ impl Decoder {
         &mut self,
         command: StorageCommand,
     ) -> Result<StorageCommand, DecodeError> {
-        let payload = self.connection.read_payload(command.byte_count).await;
-        let payload = match payload {
-            Ok(value) => value,
-            Err(_error) => return Err(DecodeError::ConnectionClosed),
-        };
+        let payload = self
+            .connection
+            .read_payload(command.byte_count)
+            .await
+            .map_err(|_| DecodeError::ConnectionClosed)?;
 
-        let payload = match parse_payload(payload, command.byte_count) {
-            Ok(value) => value,
-            Err(error) => return Err(DecodeError::ParseError(error)),
-        };
+        let payload = parse_payload(payload, command.byte_count)
+            .map_err(|err| DecodeError::ParseError(err))?;
 
         return Ok(StorageCommand {
             payload: payload,
@@ -196,7 +194,7 @@ impl Decoder {
     }
 }
 
-fn parse_payload(mut payload: String, byte_count: u128) -> Result<String, ParseError> {
+fn parse_payload(mut payload: String, byte_count: usize) -> Result<String, ParseError> {
     if payload.ends_with("\r\n") {
         payload.truncate(byte_count as usize);
         return Ok(payload);
@@ -209,7 +207,7 @@ fn parse_payload(mut payload: String, byte_count: u128) -> Result<String, ParseE
 
 fn parse_header(header: String) -> Result<Command, ParseError> {
     // ? I think we cannot detect missing \r\n in header because we must read untill we see \r\n
-    // ? It is up to the client to not mess this up. 
+    // ? It is up to the client to not mess this up.
 
     let keywords: Vec<_> = header.split_whitespace().collect();
     let command = keywords
@@ -240,7 +238,7 @@ fn parse_header(header: String) -> Result<Command, ParseError> {
 fn parse_storage_command(keywords: &[&str], key: String) -> Result<StorageCommand, ParseError> {
     let flags = parse_field::<u16>(keywords, 2, "flags")?;
     let exptime = parse_field::<i128>(keywords, 3, "exptime")?;
-    let byte_count = parse_field::<u128>(keywords, 4, "byte count")?;
+    let byte_count = parse_field::<usize>(keywords, 4, "byte count")?;
     let no_reply = keywords.get(5).is_some(); // If there's a 6th keyword, assume "no_reply"
 
     Ok(StorageCommand {
@@ -265,7 +263,9 @@ fn parse_field<T: std::str::FromStr>(
             field_name
         )))?
         .parse::<T>()
-        .map_err(|_parse_number_errror| ParseError::InvalidFormat(format!("Expected a valid {} value", field_name)))
+        .map_err(|_parse_number_errror| {
+            ParseError::InvalidFormat(format!("Expected a valid {} value", field_name))
+        })
 }
 
 fn split_once(in_string: &str, pat: &str) -> (String, String) {

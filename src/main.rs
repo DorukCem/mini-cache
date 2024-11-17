@@ -8,14 +8,14 @@ use std::{
 use tokio::net::{TcpListener, TcpStream};
 mod decoder;
 
-const PORT: &'static str = "8012";
+const PORT: &'static str = "8008";
 const ADDRESS: &'static str = concatcp!("127.0.0.1:", PORT);
 
 #[derive(Debug)]
 struct DbEntry {
     value: String,
     flags: u16,
-    byte_count: u128,
+    byte_count: usize,
     valid_until: Option<SystemTime>,
 }
 
@@ -88,6 +88,7 @@ fn handle_append(command: StorageCommand, db: &Database) -> String {
         value.value.push_str(command.payload.as_str());
         return "STORED\r\n".to_string();
     }
+    map.remove(&command.key);
 
     "NOT_STORED\r\n".to_string()
 }
@@ -101,6 +102,7 @@ fn handle_prepend(command: StorageCommand, db: &Database) -> String {
         value.value = command.payload + (value.value).as_str();
         return "STORED\r\n".to_string();
     }
+    map.remove(&command.key);
 
     "NOT_STORED\r\n".to_string()
 }
@@ -118,6 +120,8 @@ fn handle_replace(command: StorageCommand, db: &Database) -> String {
         );
         return "STORED\r\n".to_string();
     }
+
+    map.remove(&command.key);
 
     "NOT_STORED\r\n".to_string()
 }
@@ -183,7 +187,7 @@ fn is_key_valid(key: &str, map: &HashMap<String, DbEntry>) -> bool {
                 return false;
             }
         }
-        return true
+        return true;
     }
     false
 }
@@ -200,7 +204,7 @@ fn insert_entry(
     key: String,
     payload: String,
     flags: u16,
-    byte_count: u128,
+    byte_count: usize,
     exptime: i128,
     map: &mut HashMap<String, DbEntry>,
 ) {
@@ -220,8 +224,6 @@ fn insert_entry(
 
 #[tokio::main]
 async fn main() {
+    println!("Ready!"); // This signals readiness to the Python script
     start_tcp_server().await;
 }
-
-#[cfg(test)]
-mod tests {}

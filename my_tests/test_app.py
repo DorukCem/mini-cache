@@ -1,4 +1,3 @@
-import itertools
 import socket
 import subprocess
 import threading
@@ -6,15 +5,18 @@ import time
 import random
 
 HOST = "127.0.0.1"
-PORT = 8012
+PORT = 8008
 
 
 def start_process():
-    # Start the application using cargo run
+    """Starts the application, using cargo run."""
     process = subprocess.Popen(
-        ["cargo", "run"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ["cargo", "run"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
     )
-    time.sleep(3)
+    # Block until the "Ready!" message is detected
+    for line in iter(process.stdout.readline, ""):  # Blocking read
+        if "Ready!" in line:
+            break
 
     return process  # Test will run after this
 
@@ -41,7 +43,7 @@ def assert_response(response: str, expected: str, message: str):
     ), f"{message}: Expected '{expected}', but got '{response}'"
 
 
-def test_commands(process):
+def verify_commands(process):
     try:
         socket = tcp_connection()
 
@@ -169,7 +171,7 @@ def test_commands(process):
         socket.close()
 
 
-def test_concurrect(process: subprocess.Popen[bytes]):
+def verify_concurrect(process: subprocess.Popen[bytes]):
     threads = []
 
     def perform_set():
@@ -199,7 +201,7 @@ def test_concurrect(process: subprocess.Popen[bytes]):
     print("---- Test Concurrent Passed ----")
 
 
-def test_expiration(process):
+def verify_expiration(process):
     try:
         socket = tcp_connection()
 
@@ -236,9 +238,9 @@ def test_expiration(process):
 try:
     process = start_process()
     print("Process Started, starting tests ...")
-    test_commands(process)
-    test_concurrect(process)
-    test_expiration(process)
+    verify_commands(process)
+    verify_concurrect(process)
+    verify_expiration(process)
     print("--- All Tests Passed ---")
 finally:
     process.terminate()
