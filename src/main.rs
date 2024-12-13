@@ -8,8 +8,8 @@ use std::{
 use tokio::net::{TcpListener, TcpStream};
 mod decoder;
 
-const PORT: &'static str = "8008";
-const ADDRESS: &'static str = concatcp!("127.0.0.1:", PORT);
+const PORT: &str = "8008";
+const ADDRESS: &str = concatcp!("127.0.0.1:", PORT);
 
 #[derive(Debug)]
 struct DbEntry {
@@ -45,7 +45,7 @@ async fn handle_connection(socket: TcpStream, db: Arc<Database>) {
         let command = decoder.decode().await;
         let response = match command {
             Ok(command) => {
-                println!("Command recieved was {:?}", command);
+                println!("Command recieved was {command:?}");
                 execute_command(command, &db)
             }
             Err(error) => match error {
@@ -55,31 +55,29 @@ async fn handle_connection(socket: TcpStream, db: Arc<Database>) {
                 }
                 decoder::DecodeError::ParseError(parse_error) => match parse_error {
                     decoder::ParseError::InvalidFormat(client_error) => {
-                        format!("CLIENT_ERROR {}\r\n", client_error)
+                        format!("CLIENT_ERROR {client_error}\r\n")
                     }
                     decoder::ParseError::UnknownCommand(_message) => "ERROR\r\n".to_owned(),
                 },
             },
         };
-        println!("Created response: {}", response);
+        println!("Created response: {response}");
         decoder.send(response).await;
     }
 }
 
 fn execute_command(command: Command, db: &Database) -> String {
-    let response = match command {
+    match command {
         Command::Set(set_command) => handle_set(set_command, db),
-        Command::Get(get_command) => handle_get(get_command, db),
+        Command::Get(get_command) => handle_get(&get_command, db),
         Command::Add(add_command) => handle_add(add_command, db),
         Command::Replace(replace_command) => handle_replace(replace_command, db),
         Command::Prepend(prepend_command) => handle_prepend(prepend_command, db),
-        Command::Append(append_command) => handle_append(append_command, db),
-    };
-
-    return response;
+        Command::Append(append_command) => handle_append(&append_command, db),
+    }
 }
 
-fn handle_append(command: StorageCommand, db: &Database) -> String {
+fn handle_append(command: &StorageCommand, db: &Database) -> String {
     let mut map = db.map.lock().unwrap();
 
     if is_key_valid(&command.key, &map) {
@@ -158,7 +156,7 @@ fn handle_set(command: StorageCommand, db: &Database) -> String {
     "STORED\r\n".to_string()
 }
 
-fn handle_get(command: GetCommand, db: &Database) -> String {
+fn handle_get(command: &GetCommand, db: &Database) -> String {
     let mut map = db.map.lock().unwrap();
     match map.get(&command.key) {
         Some(entry) => {

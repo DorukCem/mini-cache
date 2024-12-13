@@ -47,8 +47,7 @@ struct ConnectionBuffer {
 
 impl ConnectionBuffer {
     async fn read_header(&mut self) -> Result<String, ConnectionClosedError> {
-        let data = self.read_until_delimeter().await;
-        data
+        self.read_until_delimeter().await
     }
 
     async fn read_until_delimeter(&mut self) -> Result<String, ConnectionClosedError> {
@@ -74,7 +73,7 @@ impl ConnectionBuffer {
 
         let (header, rest) = split_once(&self.buffer, "\r\n");
         self.buffer = rest;
-        return Ok(header);
+        Ok(header)
     }
 
     async fn read_payload(&mut self, byte_count: usize) -> Result<String, ConnectionClosedError> {
@@ -100,7 +99,7 @@ impl ConnectionBuffer {
             );
         }
         let buffer = self.buffer.clone();
-        let (payload, rest) = buffer.split_at(byte_count as usize);
+        let (payload, rest) = buffer.split_at(byte_count);
         self.buffer = rest.to_string();
         Ok(payload.to_string())
     }
@@ -112,12 +111,12 @@ pub struct Decoder {
 
 impl Decoder {
     pub fn new(connection: TcpStream) -> Self {
-        return Self {
+        Self {
             connection: ConnectionBuffer {
-                connection: connection,
+                connection,
                 buffer: String::new(),
             },
-        };
+        }
     }
 
     pub async fn decode(&mut self) -> Result<Command, DecodeError> {
@@ -126,46 +125,36 @@ impl Decoder {
             Ok(contents) => contents,
             Err(_conection_closed) => return Err(DecodeError::ConnectionClosed),
         };
-        let parse_result = parse_header(header);
+        let parse_result = parse_header(&header);
         match parse_result {
             Ok(command) => match command {
-                Command::Set(set_command) => {
-                    return self
-                        .parse_storage_command_payload(set_command)
-                        .await
-                        .map(|x| Command::Set(x))
-                }
-                Command::Get(_) => return Ok(command),
-                Command::Add(add_command) => {
-                    return self
-                        .parse_storage_command_payload(add_command)
-                        .await
-                        .map(|x| Command::Add(x))
-                }
-                Command::Replace(replace_command) => {
-                    return self
-                        .parse_storage_command_payload(replace_command)
-                        .await
-                        .map(|x| Command::Replace(x))
-                }
-                Command::Prepend(prepend_command) => {
-                    return self
-                        .parse_storage_command_payload(prepend_command)
-                        .await
-                        .map(|x| Command::Prepend(x))
-                }
-                Command::Append(append_command) => {
-                    return self
-                        .parse_storage_command_payload(append_command)
-                        .await
-                        .map(|x| Command::Append(x))
-                }
+                Command::Set(set_command) => self
+                    .parse_storage_command_payload(set_command)
+                    .await
+                    .map(Command::Set),
+                Command::Get(_) => Ok(command),
+                Command::Add(add_command) => self
+                    .parse_storage_command_payload(add_command)
+                    .await
+                    .map(Command::Add),
+                Command::Replace(replace_command) => self
+                    .parse_storage_command_payload(replace_command)
+                    .await
+                    .map(Command::Replace),
+                Command::Prepend(prepend_command) => self
+                    .parse_storage_command_payload(prepend_command)
+                    .await
+                    .map(Command::Prepend),
+                Command::Append(append_command) => self
+                    .parse_storage_command_payload(append_command)
+                    .await
+                    .map(Command::Append),
             },
             Err(parse_error) => Err(DecodeError::ParseError(parse_error)),
         }
     }
 
-    pub async fn send(&mut self, response: String) -> () {
+    pub async fn send(&mut self, response: String) {
         let bytes = response.as_bytes();
         self.connection
             .connection
@@ -184,39 +173,36 @@ impl Decoder {
             .await
             .map_err(|_| DecodeError::ConnectionClosed)?;
 
-        let payload = parse_payload(payload, command.byte_count)
-            .map_err(|err| DecodeError::ParseError(err))?;
+        let payload =
+            parse_payload(payload, command.byte_count).map_err(DecodeError::ParseError)?;
 
-        return Ok(StorageCommand {
-            payload: payload,
-            ..command
-        });
+        Ok(StorageCommand { payload, ..command })
     }
 }
 
 fn parse_payload(mut payload: String, byte_count: usize) -> Result<String, ParseError> {
     if payload.ends_with("\r\n") {
-        payload.truncate(byte_count as usize);
+        payload.truncate(byte_count);
         return Ok(payload);
     }
 
-    return Err(ParseError::InvalidFormat(
+    Err(ParseError::InvalidFormat(
         "Expected \r\n at the end of string".to_string(),
-    ));
+    ))
 }
 
-fn parse_header(header: String) -> Result<Command, ParseError> {
+fn parse_header(header: &str) -> Result<Command, ParseError> {
     // ? I think we cannot detect missing \r\n in header because we must read untill we see \r\n
     // ? It is up to the client to not mess this up.
 
     let keywords: Vec<_> = header.split_whitespace().collect();
     let command = keywords
-        .get(0)
+        .first()
         .ok_or(ParseError::InvalidFormat("Missing command".to_string()))?;
-    let key = keywords
+    let key = (*keywords
         .get(1)
-        .ok_or(ParseError::InvalidFormat("Missing key".to_string()))?
-        .to_string();
+        .ok_or(ParseError::InvalidFormat("Missing key".to_string()))?)
+    .to_string(); // &str` implements `ToString` through a slower blanket impl, but `str` has a fast specialization of `ToString`
 
     match command.to_lowercase().as_str() {
         "get" => Ok(Command::Get(GetCommand { key })),
@@ -231,7 +217,7 @@ fn parse_header(header: String) -> Result<Command, ParseError> {
                 _ => unreachable!(),
             }
         }
-        _ => Err(ParseError::UnknownCommand(command.to_string())),
+        _ => Err(ParseError::UnknownCommand((*command).to_string())),
     }
 }
 
@@ -247,7 +233,7 @@ fn parse_storage_command(keywords: &[&str], key: String) -> Result<StorageComman
         exptime,
         byte_count,
         no_reply,
-        payload: "".to_owned(),
+        payload: String::new(),
     })
 }
 
@@ -259,12 +245,11 @@ fn parse_field<T: std::str::FromStr>(
     keywords
         .get(index)
         .ok_or(ParseError::InvalidFormat(format!(
-            "{} is missing",
-            field_name
+            "{field_name} is missing"
         )))?
         .parse::<T>()
         .map_err(|_parse_number_errror| {
-            ParseError::InvalidFormat(format!("Expected a valid {} value", field_name))
+            ParseError::InvalidFormat(format!("Expected a valid {field_name} value"))
         })
 }
 
